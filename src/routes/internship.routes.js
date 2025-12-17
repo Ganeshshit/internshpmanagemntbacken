@@ -1,6 +1,5 @@
 // src/routes/internship.routes.js
 // Internship route definitions
-
 const express = require('express');
 const internshipController = require('../controllers/internship.controller');
 const authMiddleware = require('../middlewares/auth.middleware');

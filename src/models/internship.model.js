@@ -118,3 +118,4 @@ internshipSchema.methods.hasAvailableSeats = function () {
 };
 
 module.exports = mongoose.model('Internship', internshipSchema);
+
