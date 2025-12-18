@@ -211,9 +211,56 @@ const internshipService = {
     /**
      * Get trainer's internships
      */
+    // async getTrainerInternships(trainerId, filters, currentUser) {
+    //     // Trainers can only see their own internships unless admin
+    //     if (
+    //         currentUser.role === ROLES.TRAINER &&
+    //         trainerId.toString() !== currentUser.id.toString()
+    //     ) {
+    //         throw new AppError('Not authorized', 403);
+    //     }
+
+
+    //     const { page, limit, status, search } = filters;
+    //     const skip = (page - 1) * limit;
+
+    //     const query = { trainerId };
+
+    //     if (status) {
+    //         query.status = status;
+    //     }
+
+    //     if (search) {
+    //         query.$or = [
+    //             { title: { $regex: search, $options: 'i' } },
+    //             { description: { $regex: search, $options: 'i' } },
+    //         ];
+    //     }
+
+    //     const [internships, total] = await Promise.all([
+    //         Internship.find(query)
+    //             .sort({ createdAt: -1 })
+    //             .skip(skip)
+    //             .limit(limit)
+    //             .lean(),
+    //         Internship.countDocuments(query),
+    //     ]);
+
+    //     return {
+    //         internships,
+    //         page,
+    //         limit,
+    //         total,
+    //     };
+    // },
+
     async getTrainerInternships(trainerId, filters, currentUser) {
-        // Trainers can only see their own internships unless admin
-        if (currentUser.role === ROLES.TRAINER && trainerId !== currentUser.userId.toString()) {
+
+        // Authorization: trainer can only see own internships
+        if (
+            currentUser.role === ROLES.TRAINER &&
+            trainerId.toString() !== currentUser.userId.toString()
+        ) {
             throw new AppError('Not authorized', 403);
         }
 
@@ -249,6 +296,7 @@ const internshipService = {
             total,
         };
     },
+
 
     /**
      * Get student's enrolled internships

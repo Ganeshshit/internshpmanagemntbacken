@@ -115,6 +115,7 @@ const internshipController = {
      * GET /api/v1/internships/trainer/all
      * Access: Trainer, Admin
      */
+
     getTrainerInternships: asyncHandler(async (req, res) => {
         const filters = {
             page: parseInt(req.query.page) || 1,
@@ -124,7 +125,7 @@ const internshipController = {
         };
 
         const result = await internshipService.getTrainerInternships(
-            req.user.userId,
+            req.user.userId,   // ✅ CORRECT
             filters,
             req.user
         );

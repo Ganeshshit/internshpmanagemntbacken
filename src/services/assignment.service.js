@@ -310,19 +310,90 @@ const assignmentService = {
     /**
          * Submit assignment
          */
+    // async submitAssignment(assignmentId, studentId, data, file) {
+    //     const assignment = await Assignment.findById(assignmentId);
+
+    //     if (!assignment) {
+    //         throw new AppError('Assignment not found', 404);
+    //     }
+
+    //     // Check if assignment is published
+    //     if (assignment.status !== 'published') {
+    //         throw new AppError('Assignment is not accepting submissions', 400);
+    //     }
+
+    //     // Check if student is enrolled
+    //     const enrollment = await InternshipEnrollment.findOne({
+    //         studentId,
+    //         internshipId: assignment.internshipId,
+    //         status: 'active',
+    //     });
+
+    //     if (!enrollment) {
+    //         throw new AppError('You are not enrolled in this internship', 403);
+    //     }
+
+    //     // Check if already submitted
+    //     const existingSubmission = await Submission.findOne({
+    //         assignmentId,
+    //         studentId,
+    //     });
+
+    //     if (existingSubmission) {
+    //         throw new AppError('You have already submitted this assignment', 400);
+    //     }
+
+    //     // Check due date and late submission
+    //     const isLate = DateUtil.isLateSubmission(new Date(), assignment.dueDate);
+    //     if (isLate && !assignment.allowLateSubmission) {
+    //         throw new AppError('Assignment deadline has passed', 400);
+    //     }
+
+    //     // Process submission based on type
+    //     const submissionData = {
+    //         assignmentId,
+    //         studentId,
+    //         submissionType: data.submissionType,
+    //         isLate,
+    //     };
+
+    //     if (data.submissionType === 'pdf') {
+    //         if (!file) {
+    //             throw new AppError('PDF file is required', 400);
+    //         }
+
+    //         // Validate file type
+    //         if (file.mimetype !== 'application/pdf') {
+    //             throw new AppError('Only PDF files are allowed', 400);
+    //         }
+
+    //         const fileData = await fileUtil.saveFile(file, 'submissions');
+    //         submissionData.fileUrl = fileData.url;
+    //         submissionData.fileName = file.originalname;
+    //         submissionData.fileSize = file.size;
+    //     } else if (data.submissionType === 'text') {
+    //         if (!data.textContent) {
+    //             throw new AppError('Text content is required', 400);
+    //         }
+    //         submissionData.textContent = data.textContent;
+    //     }
+
+    //     const submission = new Submission(submissionData);
+    //     await submission.save();
+
+    //     return await submission.populate('studentId', 'name email');
+    // },
+
     async submitAssignment(assignmentId, studentId, data, file) {
         const assignment = await Assignment.findById(assignmentId);
-
         if (!assignment) {
             throw new AppError('Assignment not found', 404);
         }
 
-        // Check if assignment is published
         if (assignment.status !== 'published') {
             throw new AppError('Assignment is not accepting submissions', 400);
         }
 
-        // Check if student is enrolled
         const enrollment = await InternshipEnrollment.findOne({
             studentId,
             internshipId: assignment.internshipId,
@@ -333,7 +404,6 @@ const assignmentService = {
             throw new AppError('You are not enrolled in this internship', 403);
         }
 
-        // Check if already submitted
         const existingSubmission = await Submission.findOne({
             assignmentId,
             studentId,
@@ -343,13 +413,11 @@ const assignmentService = {
             throw new AppError('You have already submitted this assignment', 400);
         }
 
-        // Check due date and late submission
         const isLate = DateUtil.isLateSubmission(new Date(), assignment.dueDate);
         if (isLate && !assignment.allowLateSubmission) {
             throw new AppError('Assignment deadline has passed', 400);
         }
 
-        // Process submission based on type
         const submissionData = {
             assignmentId,
             studentId,
@@ -357,31 +425,33 @@ const assignmentService = {
             isLate,
         };
 
+        // -------- FILE SUBMISSION --------
         if (data.submissionType === 'pdf') {
             if (!file) {
-                throw new AppError('PDF file is required', 400);
+                throw new AppError('File is required', 400);
             }
 
-            // Validate file type
-            if (file.mimetype !== 'application/pdf') {
-                throw new AppError('Only PDF files are allowed', 400);
-            }
+            const uploaded = await uploadToCloudinary(file.buffer, {
+                folder: 'internships/submissions',
+            });
 
-            const fileData = await fileUtil.saveFile(file, 'submissions');
-            submissionData.fileUrl = fileData.url;
+            submissionData.fileUrl = uploaded.secure_url;
             submissionData.fileName = file.originalname;
             submissionData.fileSize = file.size;
-        } else if (data.submissionType === 'text') {
+            submissionData.mimeType = file.mimetype;
+        }
+
+        // -------- TEXT SUBMISSION --------
+        if (data.submissionType === 'text') {
             if (!data.textContent) {
                 throw new AppError('Text content is required', 400);
             }
             submissionData.textContent = data.textContent;
         }
 
-        const submission = new Submission(submissionData);
-        await submission.save();
+        const submission = await Submission.create(submissionData);
 
-        return await submission.populate('studentId', 'name email');
+        return submission.populate('studentId', 'name email');
     },
     /**
      * Get all submissions for an assignment

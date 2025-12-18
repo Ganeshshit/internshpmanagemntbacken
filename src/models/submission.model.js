@@ -1,4 +1,4 @@
-// src/models/submission.model.js
+// src/models/submission.model.js (Add mimeType field)
 const mongoose = require('mongoose');
 
 const submissionSchema = new mongoose.Schema(
@@ -33,6 +33,11 @@ const submissionSchema = new mongoose.Schema(
 
         fileSize: {
             type: Number,
+            default: null,
+        },
+
+        mimeType: {
+            type: String,
             default: null,
         },
 
@@ -111,7 +116,7 @@ const submissionSchema = new mongoose.Schema(
     }
 );
 
-// Compound index to track submissions per assignment per student
+// Compound index
 submissionSchema.index({ assignmentId: 1, studentId: 1 });
 submissionSchema.index({ studentId: 1, status: 1 });
 submissionSchema.index({ assignmentId: 1, status: 1 });
@@ -121,7 +126,7 @@ submissionSchema.index({ submittedAt: -1 });
 submissionSchema.virtual('grade').get(function () {
     if (this.marks === null) return null;
 
-    const percentage = (this.marks / 100) * 100; // Assuming totalMarks from assignment
+    const percentage = (this.marks / 100) * 100;
 
     if (percentage >= 90) return 'A+';
     if (percentage >= 80) return 'A';
@@ -155,18 +160,16 @@ submissionSchema.methods.requestResubmission = function (feedback, evaluatedById
     return this.save();
 };
 
-// Pre-save middleware to check if submission is late
-submissionSchema.pre('save', async function (next) {
-    if (this.isNew) {
-        const Assignment = mongoose.model('Assignment');
-        const assignment = await Assignment.findById(this.assignmentId);
+// Pre-save middleware
+submissionSchema.pre('save', async function () {
+    if (!this.isNew) return;
 
-        if (assignment && this.submittedAt > assignment.dueDate) {
-            this.isLate = true;
-        }
+    const Assignment = mongoose.model('Assignment');
+    const assignment = await Assignment.findById(this.assignmentId);
+
+    if (assignment && this.submittedAt > assignment.dueDate) {
+        this.isLate = true;
     }
-    next();
 });
 
 module.exports = mongoose.model('AssignmentSubmission', submissionSchema);
-

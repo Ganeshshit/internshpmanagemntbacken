@@ -81,6 +81,12 @@ const assignmentSchema = new mongoose.Schema(
             type: Boolean,
             default: false,
         },
+        maxResubmissions: {
+            type: Number,
+            default: 1,
+            min: 1,
+            max: 3,
+        },
 
         lateSubmissionPenalty: {
             type: Number,

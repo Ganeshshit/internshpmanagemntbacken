@@ -18,27 +18,7 @@ const router = express.Router();
  * @desc    Create new assignment
  * @access  Trainer
  */
-// router.post(
-//     '/',
-//     authMiddleware,
-//     isTrainer,
-//     uploadMiddleware.array('attachments', 5),
-//     validate(assignmentValidation.create),
-//     assignmentController.createAssignment
-// );
-// router.post(
-//     '/',
-//     authMiddleware,
-//     isTrainer,
-//     (req, res, next) => {
-//         if (req.body.type === 'pdf') {
-//             return uploadMiddleware.array('attachments', 5)(req, res, next);
-//         }
-//         return next();
-//     },
-//     validate(assignmentValidation.create),
-//     assignmentController.createAssignment
-// );
+
 router.post(
     '/',
     authMiddleware,
@@ -225,5 +205,6 @@ router.get(
     validate(assignmentValidation.getByInternship),
     assignmentController.getAssignmentsByInternship
 );
+
 
 module.exports = router;

@@ -1,41 +1,54 @@
 // src/controllers/auth.controller.js
+// src/controllers/auth.controller.js
 
 const AuthService = require('../services/auth.service');
 const ApiResponse = require('../utils/response.util');
+const { asyncHandler, AppError } = require('../middlewares/error.middleware');
 
 class AuthController {
-  static async register(req, res) {
+  /**
+   * Register new user
+   */
+  static register = asyncHandler(async (req, res) => {
     const user = await AuthService.register(req.body);
-    return ApiResponse.created(res, user, 'User registered');
-  }
+    return ApiResponse.created(res, user, 'User registered successfully');
+  });
 
-  static async login(req, res) {
+  /**
+   * Login user and issue tokens
+   */
+  static login = asyncHandler(async (req, res) => {
     const { user, accessToken, refreshToken } =
       await AuthService.login(req.body, req);
 
     res.cookie('accessToken', accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 15 * 60 * 1000,
+      sameSite: 'lax',
+      maxAge: 15 * 60 * 1000, // 15 minutes
     });
 
     res.cookie('refreshToken', refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
     return ApiResponse.success(res, { user }, 'Login successful');
-  }
+  });
 
+  /**
+   * Refresh access token using refresh token (cookie-based)
+   */
+  static refreshToken = asyncHandler(async (req, res) => {
+    const refreshToken = req.cookies?.refreshToken;
 
-  static async refreshToken(req, res) {
-    const refreshToken = req.cookies.refreshToken;
-    if (!refreshToken) throw new Error('Refresh token missing');
+    if (!refreshToken) {
+      throw new AppError('Refresh token missing', 401);
+    }
 
-    const { accessToken, refreshToken: newRefresh } =
+    const { accessToken, refreshToken: newRefreshToken } =
       await AuthService.refreshToken(refreshToken);
 
     res.cookie('accessToken', accessToken, {
@@ -45,31 +58,44 @@ class AuthController {
       maxAge: 15 * 60 * 1000,
     });
 
-    res.cookie('refreshToken', newRefresh, {
+    res.cookie('refreshToken', newRefreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       maxAge: 7 * 24 * 60 * 60 * 1000,
     });
 
-    return ApiResponse.success(res, null, 'Token refreshed');
-  }
+    return ApiResponse.success(res, null, 'Token refreshed successfully');
+  });
 
-
-  static async getProfile(req, res) {
+  /**
+   * Get logged-in user profile
+   */
+  static getProfile = asyncHandler(async (req, res) => {
     const user = await AuthService.getProfile(req.user.userId);
     return ApiResponse.success(res, user);
-  }
+  });
 
-  static async logout(req, res) {
+  /**
+   * Logout user and revoke session
+   */
+  static logout = asyncHandler(async (req, res) => {
     await AuthService.logout(req.user.sessionId);
 
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
+    res.clearCookie('accessToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+    });
 
-    return ApiResponse.success(res, null, 'Logged out');
-  }
+    res.clearCookie('refreshToken', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+    });
 
+    return ApiResponse.success(res, null, 'Logged out successfully');
+  });
 }
 
 module.exports = AuthController;
