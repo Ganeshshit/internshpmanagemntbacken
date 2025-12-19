@@ -5,7 +5,7 @@ const express = require('express');
 const authRoutes = require('./auth.routes');
 const userRoutes = require('./user.routes');
 const internshipRoutes = require('./internship.routes');
-// const attendanceRoutes = require('./attendance.routes');
+const attendanceRoutes = require('./attendance.routes');
 const assignmentRoutes = require('./assignment.routes');
 const submissionRoutes = require('./submission.routes');
 // const quizRoutes = require('./quiz.routes');
@@ -30,7 +30,7 @@ router.get(`/${API_VERSION}/health`, (req, res) => {
 router.use(`/${API_VERSION}/auth`, authRoutes);
 router.use(`/${API_VERSION}/users`, userRoutes);
 router.use(`/${API_VERSION}/internships`, internshipRoutes);
-// router.use(`${API_VERSION}/attendance`, attendanceRoutes);
+router.use(`/${API_VERSION}/attendance`, attendanceRoutes);
 router.use(`/${API_VERSION}/assignments`, assignmentRoutes);
 router.use(`/${API_VERSION}/submissions`, submissionRoutes); 
 // router.use(`${API_VERSION}/quizzes`, quizRoutes);
