@@ -2,20 +2,19 @@
 const express = require('express');
 const submissionController = require('../controllers/submission.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
-const { isTrainer, isStudent, isTrainerOrAdmin } = require('../middlewares/role.middleware');
+const { isTrainer, isStudent } = require('../middlewares/role.middleware');
 const { validate } = require('../middlewares/validate.middleware');
 const submissionValidation = require('../validations/submission.validation');
-const uploadMiddleware = require('../middlewares/upload.middleware');
 
 const router = express.Router();
 
 // ==========================================
-// TRAINER ROUTES
+// TRAINER ROUTES - Evaluation
 // ==========================================
 
 /**
  * @route   GET /api/v1/submissions/:id
- * @desc    Get submission by ID (Trainer)
+ * @desc    Get submission by ID (for evaluation)
  * @access  Trainer
  */
 router.get(
@@ -28,7 +27,7 @@ router.get(
 
 /**
  * @route   PUT /api/v1/submissions/:id/evaluate
- * @desc    Evaluate submission
+ * @desc    Evaluate submission and assign marks
  * @access  Trainer
  */
 router.put(
@@ -40,42 +39,41 @@ router.put(
 );
 
 /**
- * @route   PUT /api/v1/submissions/:id/request-resubmit
+ * @route   PUT /api/v1/submissions/:id/request-resubmission
  * @desc    Request resubmission from student
  * @access  Trainer
  */
 router.put(
-    '/:id/request-resubmit',
+    '/:id/request-resubmission',
     authMiddleware,
     isTrainer,
-    validate(submissionValidation.requestResubmit),
+    validate(submissionValidation.requestResubmission),
     submissionController.requestResubmission
 );
 
 /**
- * @route   GET /api/v1/submissions/assignment/:assignmentId
- * @desc    Get all submissions for an assignment
+ * @route   POST /api/v1/submissions/bulk-evaluate
+ * @desc    Bulk evaluate multiple submissions
  * @access  Trainer
  */
-router.get(
-    '/assignment/:assignmentId',
+router.post(
+    '/bulk-evaluate',
     authMiddleware,
     isTrainer,
-    validate(submissionValidation.getByAssignment),
-    submissionController.getSubmissionsByAssignment
+    validate(submissionValidation.bulkEvaluate),
+    submissionController.bulkEvaluate
 );
 
 /**
- * @route   DELETE /api/v1/submissions/:id
- * @desc    Delete submission (Admin only or specific cases)
- * @access  Trainer/Admin
+ * @route   GET /api/v1/submissions/assignment/:assignmentId/export
+ * @desc    Export submissions as CSV/Excel
+ * @access  Trainer
  */
-router.delete(
-    '/:id',
+router.get(
+    '/assignment/:assignmentId/export',
     authMiddleware,
-    isTrainerOrAdmin,
-    validate(submissionValidation.delete),
-    submissionController.deleteSubmission
+    isTrainer,
+    submissionController.exportSubmissions
 );
 
 // ==========================================
@@ -84,28 +82,14 @@ router.delete(
 
 /**
  * @route   GET /api/v1/submissions/my-submissions
- * @desc    Get all submissions by student
+ * @desc    Get all student's submissions
  * @access  Student
  */
 router.get(
     '/my-submissions',
     authMiddleware,
     isStudent,
-    validate(submissionValidation.getMySubmissions),
     submissionController.getMySubmissions
-);
-
-/**
- * @route   GET /api/v1/submissions/student/:id
- * @desc    Get student's own submission by ID
- * @access  Student
- */
-router.get(
-    '/student/:id',
-    authMiddleware,
-    isStudent,
-    validate(submissionValidation.getById),
-    submissionController.getStudentSubmissionById
 );
 
 /**
@@ -117,7 +101,6 @@ router.put(
     '/:id/resubmit',
     authMiddleware,
     isStudent,
-    uploadMiddleware.single('file'),
     validate(submissionValidation.resubmit),
     submissionController.resubmitAssignment
 );

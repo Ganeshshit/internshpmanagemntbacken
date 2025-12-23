@@ -1,5 +1,5 @@
 // src/controllers/internship.controller.js
-// HTTP layer for internship management
+// Enhanced HTTP layer with bulk operations and available students endpoint
 
 const internshipService = require('../services/internship.service');
 const ApiResponse = require('../utils/response.util');
@@ -112,10 +112,9 @@ const internshipController = {
 
     /**
      * Get trainer's internships
-     * GET /api/v1/internships/trainer/all
+     * GET /api/v1/internships/trainer/my-internships
      * Access: Trainer, Admin
      */
-
     getTrainerInternships: asyncHandler(async (req, res) => {
         const filters = {
             page: parseInt(req.query.page) || 1,
@@ -125,7 +124,7 @@ const internshipController = {
         };
 
         const result = await internshipService.getTrainerInternships(
-            req.user.userId,   // ✅ CORRECT
+            req.user.userId,
             filters,
             req.user
         );
@@ -181,16 +180,18 @@ const internshipController = {
 
     /**
      * Unenroll student from internship
-     * DELETE /api/v1/internships/:internshipId/students/:studentId
+     * DELETE /api/v1/internships/:internshipId/unenroll/:studentId
      * Access: Trainer, Admin
      */
     unenrollStudent: asyncHandler(async (req, res) => {
         const { internshipId, studentId } = req.params;
+        const { reason } = req.body;
 
         await internshipService.unenrollStudent(
             internshipId,
             studentId,
-            req.user
+            req.user,
+            reason
         );
 
         return ApiResponse.success(
@@ -209,7 +210,7 @@ const internshipController = {
         const { id } = req.params;
         const filters = {
             page: parseInt(req.query.page) || 1,
-            limit: parseInt(req.query.limit) || 10,
+            limit: parseInt(req.query.limit) || 1000,
             status: req.query.status,
         };
 
@@ -228,6 +229,63 @@ const internshipController = {
                 total: result.total,
             },
             'Enrolled students retrieved successfully'
+        );
+    }),
+
+    /**
+     * Get available students (not enrolled in this internship)
+     * GET /api/v1/internships/:id/available-students
+     * Access: Trainer, Admin
+     */
+    getAvailableStudents: asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const filters = {
+            page: parseInt(req.query.page) || 1,
+            limit: parseInt(req.query.limit) || 1000,
+            search: req.query.search,
+        };
+
+        const result = await internshipService.getAvailableStudents(
+            id,
+            filters,
+            req.user
+        );
+
+        return ApiResponse.paginated(
+            res,
+            result.students,
+            {
+                page: result.page,
+                limit: result.limit,
+                total: result.total,
+            },
+            'Available students retrieved successfully'
+        );
+    }),
+
+    /**
+     * Bulk enroll students
+     * POST /api/v1/internships/:id/bulk-enroll
+     * Access: Trainer, Admin
+     */
+    bulkEnrollStudents: asyncHandler(async (req, res) => {
+        const { id } = req.params;
+        const { studentIds } = req.body;
+
+        if (!Array.isArray(studentIds) || studentIds.length === 0) {
+            return ApiResponse.error(res, 'Student IDs array is required', 400);
+        }
+
+        const result = await internshipService.bulkEnrollStudents(
+            id,
+            studentIds,
+            req.user
+        );
+
+        return ApiResponse.success(
+            res,
+            result,
+            `Bulk enrollment completed. Success: ${result.success.length}, Failed: ${result.failed.length}, Already Enrolled: ${result.alreadyEnrolled.length}`
         );
     }),
 };

@@ -6,84 +6,63 @@ const attendanceSchema = new mongoose.Schema(
         internshipId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'Internship',
-            required: [true, 'Internship is required'],
+            required: true,
             index: true,
         },
-
         studentId: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
-            required: [true, 'Student is required'],
+            required: true,
             index: true,
         },
-
         date: {
             type: Date,
-            required: [true, 'Date is required'],
+            required: true,
             index: true,
         },
-
+        month: {
+            type: Number,
+            required: true,
+            min: 1,
+            max: 12,
+            index: true,
+        },
+        year: {
+            type: Number,
+            required: true,
+            index: true,
+        },
         status: {
             type: String,
-            enum: ['present', 'absent', 'late', 'excused'],
-            required: [true, 'Status is required'],
+            enum: ['present', 'absent', 'late', 'excused', 'half-day'],
             default: 'present',
+            required: true,
         },
-
         checkInTime: {
             type: Date,
             default: null,
         },
-
         checkOutTime: {
             type: Date,
             default: null,
         },
-
+        duration: {
+            type: Number, // Duration in minutes
+            default: null,
+        },
         isLate: {
             type: Boolean,
             default: false,
         },
-
         lateBy: {
-            type: Number, // minutes
+            type: Number, // Minutes late
             default: 0,
         },
-
         remarks: {
             type: String,
             maxlength: 500,
-            default: null,
+            default: '',
         },
-
-        markedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User',
-            required: true,
-        },
-
-        markedByRole: {
-            type: String,
-            enum: ['student', 'trainer', 'admin'],
-            required: true,
-        },
-
-        isApproved: {
-            type: Boolean,
-            default: true, // Auto-approved for trainer/admin
-        },
-
-        approvedBy: {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: 'User',
-            default: null,
-        },
-
-        approvedAt: {
-            type: Date,
-            default: null,
-        },
-
         location: {
             type: {
                 type: String,
@@ -91,37 +70,41 @@ const attendanceSchema = new mongoose.Schema(
                 default: 'Point',
             },
             coordinates: {
-                type: [Number], // [longitude, latitude]
-                default: null,
+                type: [Number],
+                default: [0, 0],
             },
         },
-
         ipAddress: {
             type: String,
             default: null,
         },
-
         device: {
             type: String,
             default: null,
         },
-
+        markedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            required: true,
+        },
+        markedByRole: {
+            type: String,
+            enum: ['student', 'trainer', 'admin'],
+            required: true,
+        },
         isEdited: {
             type: Boolean,
             default: false,
         },
-
         editedBy: {
             type: mongoose.Schema.Types.ObjectId,
             ref: 'User',
             default: null,
         },
-
         editedAt: {
             type: Date,
             default: null,
         },
-
         editReason: {
             type: String,
             maxlength: 500,
@@ -130,127 +113,142 @@ const attendanceSchema = new mongoose.Schema(
     },
     {
         timestamps: true,
-        toJSON: { virtuals: true },
-        toObject: { virtuals: true },
     }
 );
 
-// Compound indexes
+// Compound indexes for efficient queries
 attendanceSchema.index({ internshipId: 1, studentId: 1, date: 1 }, { unique: true });
-attendanceSchema.index({ internshipId: 1, date: 1 });
-attendanceSchema.index({ studentId: 1, date: 1 });
-attendanceSchema.index({ status: 1, isApproved: 1 });
+attendanceSchema.index({ internshipId: 1, month: 1, year: 1 });
+attendanceSchema.index({ studentId: 1, month: 1, year: 1 });
+attendanceSchema.index({ status: 1, date: -1 });
 
-// Geospatial index
+// Geospatial index for location
 attendanceSchema.index({ location: '2dsphere' });
 
-// Virtuals
-attendanceSchema.virtual('duration').get(function () {
+// Pre-save middleware to calculate duration and late status
+attendanceSchema.pre('save', async function () {
     if (this.checkInTime && this.checkOutTime) {
-        return Math.floor((this.checkOutTime - this.checkInTime) / (1000 * 60)); // minutes
+        const diffMs = this.checkOutTime - this.checkInTime;
+        this.duration = Math.floor(diffMs / (1000 * 60));
     }
-    return null;
+
+    if (this.date) {
+        this.month = this.date.getMonth() + 1;
+        this.year = this.date.getFullYear();
+    }
 });
 
-attendanceSchema.virtual('dateOnly').get(function () {
-    return this.date.toISOString().split('T')[0];
-});
-
-// Methods
-attendanceSchema.methods.approve = async function (approverId) {
-    this.isApproved = true;
-    this.approvedBy = approverId;
-    this.approvedAt = new Date();
-    return this.save();
-};
-
-attendanceSchema.methods.reject = async function () {
-    this.isApproved = false;
-    this.approvedBy = null;
-    this.approvedAt = null;
-    return this.save();
-};
-
-attendanceSchema.methods.updateStatus = async function (newStatus, editedBy, reason) {
-    this.status = newStatus;
-    this.isEdited = true;
-    this.editedBy = editedBy;
-    this.editedAt = new Date();
-    this.editReason = reason;
-    return this.save();
-};
-
-attendanceSchema.methods.checkOut = async function () {
-    this.checkOutTime = new Date();
-    return this.save();
-};
-
-// Statics
-attendanceSchema.statics.getAttendanceStats = async function (internshipId, studentId) {
+// Static method: Get monthly statistics for a student
+attendanceSchema.statics.getMonthlyStats = async function (
+    internshipId,
+    studentId,
+    month,
+    year
+) {
     const stats = await this.aggregate([
         {
             $match: {
-                internshipId: mongoose.Types.ObjectId(internshipId),
-                studentId: mongoose.Types.ObjectId(studentId),
-            },
+                internshipId: new mongoose.Types.ObjectId(internshipId),
+                studentId: new mongoose.Types.ObjectId(studentId),
+                month: parseInt(month),
+                year: parseInt(year),
+            }
+
         },
         {
             $group: {
-                _id: '$status',
-                count: { $sum: 1 },
+                _id: null,
+                total: { $sum: 1 },
+                present: {
+                    $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] },
+                },
+                absent: {
+                    $sum: { $cond: [{ $eq: ['$status', 'absent'] }, 1, 0] },
+                },
+                late: {
+                    $sum: { $cond: [{ $eq: ['$status', 'late'] }, 1, 0] },
+                },
+                excused: {
+                    $sum: { $cond: [{ $eq: ['$status', 'excused'] }, 1, 0] },
+                },
+                halfDay: {
+                    $sum: { $cond: [{ $eq: ['$status', 'half-day'] }, 1, 0] },
+                },
+                totalDuration: { $sum: '$duration' },
+            },
+        },
+        {
+            $project: {
+                _id: 0,
+                total: 1,
+                present: 1,
+                absent: 1,
+                late: 1,
+                excused: 1,
+                halfDay: 1,
+                totalDuration: 1,
+                percentage: {
+                    $cond: [
+                        { $eq: ['$total', 0] },
+                        0,
+                        {
+                            $multiply: [
+                                { $divide: ['$present', '$total'] },
+                                100,
+                            ],
+                        },
+                    ],
+                },
             },
         },
     ]);
 
-    const total = stats.reduce((sum, item) => sum + item.count, 0);
-    const present = stats.find((s) => s._id === 'present')?.count || 0;
-
-    return {
-        total,
-        present,
-        absent: stats.find((s) => s._id === 'absent')?.count || 0,
-        late: stats.find((s) => s._id === 'late')?.count || 0,
-        excused: stats.find((s) => s._id === 'excused')?.count || 0,
-        percentage: total > 0 ? ((present / total) * 100).toFixed(2) : 0,
+    return stats[0] || {
+        total: 0,
+        present: 0,
+        absent: 0,
+        late: 0,
+        excused: 0,
+        halfDay: 0,
+        totalDuration: 0,
+        percentage: 0,
     };
 };
 
-attendanceSchema.statics.getInternshipAttendanceReport = async function (
+// Static method: Get internship monthly report (all students)
+attendanceSchema.statics.getInternshipMonthlyReport = async function (
     internshipId,
-    startDate,
-    endDate
+    month,
+    year
 ) {
-    const match = {
-        internshipId: mongoose.Types.ObjectId(internshipId),
-    };
-
-    if (startDate || endDate) {
-        match.date = {};
-        if (startDate) match.date.$gte = new Date(startDate);
-        if (endDate) match.date.$lte = new Date(endDate);
-    }
-
-    return this.aggregate([
-        { $match: match },
+    const report = await this.aggregate([
         {
-            $group: {
-                _id: {
-                    studentId: '$studentId',
-                    status: '$status',
-                },
-                count: { $sum: 1 },
-            },
+            $match: {
+                internshipId: new mongoose.Types.ObjectId(internshipId),
+                month: parseInt(month),
+                year: parseInt(year),
+            }
+
         },
         {
             $group: {
-                _id: '$_id.studentId',
-                attendance: {
-                    $push: {
-                        status: '$_id.status',
-                        count: '$count',
-                    },
+                _id: '$studentId',
+                total: { $sum: 1 },
+                present: {
+                    $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] },
                 },
-                total: { $sum: '$count' },
+                absent: {
+                    $sum: { $cond: [{ $eq: ['$status', 'absent'] }, 1, 0] },
+                },
+                late: {
+                    $sum: { $cond: [{ $eq: ['$status', 'late'] }, 1, 0] },
+                },
+                excused: {
+                    $sum: { $cond: [{ $eq: ['$status', 'excused'] }, 1, 0] },
+                },
+                halfDay: {
+                    $sum: { $cond: [{ $eq: ['$status', 'half-day'] }, 1, 0] },
+                },
             },
         },
         {
@@ -269,68 +267,35 @@ attendanceSchema.statics.getInternshipAttendanceReport = async function (
                 studentId: '$_id',
                 studentName: '$student.fullName',
                 studentEmail: '$student.email',
-                attendance: 1,
+                studentRollNumber: '$student.rollNumber',
                 total: 1,
-                present: {
-                    $sum: {
-                        $map: {
-                            input: {
-                                $filter: {
-                                    input: '$attendance',
-                                    as: 'a',
-                                    cond: { $eq: ['$$a.status', 'present'] },
-                                },
-                            },
-                            as: 'p',
-                            in: '$$p.count',
-                        },
-                    },
-                },
-            },
-        },
-        {
-            $addFields: {
+                present: 1,
+                absent: 1,
+                late: 1,
+                excused: 1,
+                halfDay: 1,
                 percentage: {
                     $cond: [
-                        { $gt: ['$total', 0] },
-                        { $multiply: [{ $divide: ['$present', '$total'] }, 100] },
+                        { $eq: ['$total', 0] },
                         0,
+                        {
+                            $multiply: [
+                                { $divide: ['$present', '$total'] },
+                                100,
+                            ],
+                        },
                     ],
                 },
             },
         },
         {
-            $sort: { percentage: -1 },
+            $sort: { studentName: 1 },
         },
     ]);
+
+    return report;
 };
 
-// Pre-save middleware
-attendanceSchema.pre('save', function (next) {
-    // Auto-approve if marked by trainer or admin
-    if (this.isNew && ['trainer', 'admin'].includes(this.markedByRole)) {
-        this.isApproved = true;
-        this.approvedBy = this.markedBy;
-        this.approvedAt = new Date();
-    }
+const Attendance = mongoose.model('Attendance', attendanceSchema);
 
-    // Calculate late status
-    if (this.checkInTime && !this.isLate) {
-        const checkInHour = this.checkInTime.getHours();
-        const checkInMinute = this.checkInTime.getMinutes();
-        const expectedTime = 9 * 60; // 9:00 AM in minutes
-        const actualTime = checkInHour * 60 + checkInMinute;
-
-        if (actualTime > expectedTime) {
-            this.isLate = true;
-            this.lateBy = actualTime - expectedTime;
-            if (this.status === 'present') {
-                this.status = 'late';
-            }
-        }
-    }
-
-    next();
-});
-
-module.exports = mongoose.model('Attendance', attendanceSchema);
+module.exports = Attendance;

@@ -9,17 +9,15 @@ const submissionController = {
     // ==========================================
 
     /**
-     * Get submission by ID (Trainer)
+     * Get submission by ID (for evaluation)
      */
     getSubmissionById: asyncHandler(async (req, res) => {
         const { id } = req.params;
         const trainerId = req.user.userId;
-        const userRole = req.user.role;
 
-        const submission = await submissionService.getSubmissionById(
+        const submission = await submissionService.getSubmissionForEvaluation(
             id,
-            trainerId,
-            userRole
+            trainerId
         );
 
         return ApiResponse.success(
@@ -30,18 +28,17 @@ const submissionController = {
     }),
 
     /**
-     * Evaluate submission
+     * Evaluate submission and assign marks
      */
     evaluateSubmission: asyncHandler(async (req, res) => {
         const { id } = req.params;
-        const { marks, feedback } = req.body;
         const trainerId = req.user.userId;
+        const evaluationData = req.body;
 
         const submission = await submissionService.evaluateSubmission(
             id,
-            marks,
-            feedback,
-            trainerId
+            trainerId,
+            evaluationData
         );
 
         return ApiResponse.success(
@@ -56,13 +53,13 @@ const submissionController = {
      */
     requestResubmission: asyncHandler(async (req, res) => {
         const { id } = req.params;
-        const { feedback } = req.body;
         const trainerId = req.user.userId;
+        const { feedback } = req.body;
 
         const submission = await submissionService.requestResubmission(
             id,
-            feedback,
-            trainerId
+            trainerId,
+            feedback
         );
 
         return ApiResponse.success(
@@ -73,42 +70,44 @@ const submissionController = {
     }),
 
     /**
-     * Get all submissions for an assignment
+     * Bulk evaluate multiple submissions
      */
-    getSubmissionsByAssignment: asyncHandler(async (req, res) => {
-        const { assignmentId } = req.params;
+    bulkEvaluate: asyncHandler(async (req, res) => {
         const trainerId = req.user.userId;
-        const filters = req.query;
+        const { submissions } = req.body;
 
-        const result = await submissionService.getSubmissionsByAssignment(
-            assignmentId,
+        const result = await submissionService.bulkEvaluateSubmissions(
             trainerId,
-            filters
+            submissions
         );
 
-        return ApiResponse.paginated(
+        return ApiResponse.success(
             res,
-            result.submissions,
-            result.pagination,
-            'Submissions retrieved successfully'
+            result,
+            `Successfully evaluated ${result.successCount} submissions`
         );
     }),
 
     /**
-     * Delete submission
+     * Export submissions as CSV/Excel
      */
-    deleteSubmission: asyncHandler(async (req, res) => {
-        const { id } = req.params;
-        const userId = req.user.userId;
-        const userRole = req.user.role;
+    exportSubmissions: asyncHandler(async (req, res) => {
+        const { assignmentId } = req.params;
+        const trainerId = req.user.userId;
+        const { format = 'csv' } = req.query;
 
-        await submissionService.deleteSubmission(id, userId, userRole);
-
-        return ApiResponse.success(
-            res,
-            null,
-            'Submission deleted successfully'
+        const fileBuffer = await submissionService.exportSubmissions(
+            assignmentId,
+            trainerId,
+            format
         );
+
+        const filename = `submissions_${assignmentId}_${Date.now()}.${format}`;
+
+        res.setHeader('Content-Type', format === 'csv' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+        return res.send(fileBuffer);
     }),
 
     // ==========================================
@@ -116,13 +115,13 @@ const submissionController = {
     // ==========================================
 
     /**
-     * Get all submissions by student
+     * Get all student's submissions
      */
     getMySubmissions: asyncHandler(async (req, res) => {
         const studentId = req.user.userId;
         const filters = req.query;
 
-        const result = await submissionService.getMySubmissions(
+        const result = await submissionService.getStudentSubmissions(
             studentId,
             filters
         );
@@ -136,26 +135,7 @@ const submissionController = {
     }),
 
     /**
-     * Get student's own submission by ID
-     */
-    getStudentSubmissionById: asyncHandler(async (req, res) => {
-        const { id } = req.params;
-        const studentId = req.user.userId;
-
-        const submission = await submissionService.getStudentSubmissionById(
-            id,
-            studentId
-        );
-
-        return ApiResponse.success(
-            res,
-            submission,
-            'Submission retrieved successfully'
-        );
-    }),
-
-    /**
-     * Resubmit assignment
+     * Resubmit assignment (if allowed)
      */
     resubmitAssignment: asyncHandler(async (req, res) => {
         const { id } = req.params;
@@ -177,4 +157,4 @@ const submissionController = {
     }),
 };
 
-module.exports = submissionController; 
+module.exports = submissionController;

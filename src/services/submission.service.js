@@ -1,9 +1,12 @@
 // src/services/submission.service.js
 const Submission = require('../models/submission.model');
 const Assignment = require('../models/assignment.model');
+const InternshipEnrollment = require('../models/enrollment.model');
 const { AppError } = require('../middlewares/error.middleware');
 const { uploadToCloudinary, deleteFromCloudinary } = require('../utils/cloudinary.util');
 const DateUtil = require('../utils/date.util');
+const ExcelJS = require('exceljs');
+const { Parser } = require('json2csv');
 
 const submissionService = {
     // ==========================================
@@ -11,52 +14,48 @@ const submissionService = {
     // ==========================================
 
     /**
-     * Get submission by ID (with ownership check)
+     * Get submission for evaluation with full details
      */
-    async getSubmissionById(submissionId, userId, userRole) {
+    async getSubmissionForEvaluation(submissionId, trainerId) {
         const submission = await Submission.findById(submissionId)
-            .populate('assignmentId', 'title type maxMarks dueDate')
+            .populate('assignmentId', 'title type maxMarks passingMarks gradingCriteria createdBy')
             .populate('studentId', 'name email')
-            .populate('evaluatedBy', 'name email');
+            .populate('evaluatedBy', 'name');
 
         if (!submission) {
             throw new AppError('Submission not found', 404);
         }
 
-        // Check permissions
-        if (userRole === 'trainer') {
-            const assignment = await Assignment.findById(submission.assignmentId);
-            if (assignment.createdBy.toString() !== userId.toString()) {
-                throw new AppError('Access denied', 403);
-            }
+        // Verify trainer owns the assignment
+        const assignment = submission.assignmentId;
+        if (assignment.createdBy.toString() !== trainerId.toString()) {
+            throw new AppError('Access denied', 403);
         }
 
-        // Add computed fields
-        const submissionData = submission.toObject();
-
+        // Add enriched data
         return {
-            ...submissionData,
+            ...submission.toObject(),
             assignment: {
-                _id: submission.assignmentId._id,
-                title: submission.assignmentId.title,
-                type: submission.assignmentId.type,
-                maxMarks: submission.assignmentId.maxMarks,
-                dueDate: submission.assignmentId.dueDate,
+                title: assignment.title,
+                type: assignment.type,
+                maxMarks: assignment.maxMarks,
+                passingMarks: assignment.passingMarks,
+                gradingCriteria: assignment.gradingCriteria,
             },
             student: {
-                _id: submission.studentId._id,
                 name: submission.studentId.name,
                 email: submission.studentId.email,
             },
-            studentName: submission.studentId.name,
-            studentEmail: submission.studentId.email,
+            canEvaluate: submission.status !== 'resubmit_required',
         };
     },
 
     /**
-     * Evaluate submission
+     * Evaluate submission with marks and feedback
      */
-    async evaluateSubmission(submissionId, marks, feedback, trainerId) {
+    async evaluateSubmission(submissionId, trainerId, evaluationData) {
+        const { marks, feedback, grade } = evaluationData;
+
         const submission = await Submission.findById(submissionId)
             .populate('assignmentId');
 
@@ -64,156 +63,185 @@ const submissionService = {
             throw new AppError('Submission not found', 404);
         }
 
-        // Check assignment ownership
-        const assignment = await Assignment.findById(submission.assignmentId);
+        const assignment = submission.assignmentId;
+
+        // Verify trainer ownership
         if (assignment.createdBy.toString() !== trainerId.toString()) {
             throw new AppError('Access denied', 403);
         }
 
         // Validate marks
-        if (marks > assignment.maxMarks) {
-            throw new AppError(
-                `Marks cannot exceed maximum marks (${assignment.maxMarks})`,
-                400
-            );
+        if (marks < 0 || marks > assignment.maxMarks) {
+            throw new AppError(`Marks must be between 0 and ${assignment.maxMarks}`, 400);
         }
 
-        // Evaluate
-        await submission.evaluate(marks, feedback, trainerId);
+        // Check if already evaluated
+        if (submission.status === 'evaluated' && submission.marks !== null) {
+            throw new AppError('This submission has already been evaluated. Use update evaluation endpoint to modify.', 400);
+        }
 
-        return await submission.populate([
-            { path: 'assignmentId', select: 'title maxMarks' },
+        // Calculate grade if not provided
+        let finalGrade = grade;
+        if (!finalGrade) {
+            const percentage = (marks / assignment.maxMarks) * 100;
+            finalGrade = this._calculateGrade(percentage);
+        }
+
+        // Update submission
+        submission.marks = marks;
+        submission.feedback = feedback;
+        submission.evaluatedBy = trainerId;
+        submission.evaluatedAt = new Date();
+        submission.status = 'evaluated';
+
+        await submission.save();
+
+        // Update student progress in enrollment
+        await this._updateStudentProgress(submission.studentId, assignment.internshipId);
+
+        // Populate for response
+        await submission.populate([
             { path: 'studentId', select: 'name email' },
             { path: 'evaluatedBy', select: 'name' },
+            { path: 'assignmentId', select: 'title maxMarks' }
         ]);
+
+        return submission;
     },
 
     /**
-     * Request resubmission
+     * Request resubmission from student
      */
-    async requestResubmission(submissionId, feedback, trainerId) {
-        const submission = await Submission.findById(submissionId);
+    async requestResubmission(submissionId, trainerId, feedback) {
+        const submission = await Submission.findById(submissionId)
+            .populate('assignmentId');
 
         if (!submission) {
             throw new AppError('Submission not found', 404);
         }
 
-        // Check assignment ownership
-        const assignment = await Assignment.findById(submission.assignmentId);
+        const assignment = submission.assignmentId;
+
+        // Verify trainer ownership
         if (assignment.createdBy.toString() !== trainerId.toString()) {
             throw new AppError('Access denied', 403);
         }
 
-        // Check if assignment allows resubmission
-        if (!assignment.allowResubmission) {
-            throw new AppError('This assignment does not allow resubmission', 400);
+        // Check resubmission limit
+        if (submission.submissionAttempt >= assignment.maxResubmissions) {
+            throw new AppError('Maximum resubmission attempts reached', 400);
         }
 
-        // Request resubmission
-        await submission.requestResubmission(feedback, trainerId);
+        // Update submission
+        submission.status = 'resubmit_required';
+        submission.feedback = feedback;
+        submission.evaluatedBy = trainerId;
+        submission.evaluatedAt = new Date();
+        submission.marks = null; // Clear previous marks
 
-        return await submission.populate([
-            { path: 'assignmentId', select: 'title' },
-            { path: 'studentId', select: 'name email' },
-            { path: 'evaluatedBy', select: 'name' },
-        ]);
+        await submission.save();
+
+        return submission;
     },
 
     /**
-     * Get all submissions for an assignment
+     * Bulk evaluate multiple submissions
      */
-    async getSubmissionsByAssignment(assignmentId, trainerId, filters = {}) {
+    async bulkEvaluateSubmissions(trainerId, submissions) {
+        const results = {
+            successCount: 0,
+            failedCount: 0,
+            errors: [],
+        };
+
+        for (const item of submissions) {
+            try {
+                await this.evaluateSubmission(
+                    item.submissionId,
+                    trainerId,
+                    {
+                        marks: item.marks,
+                        feedback: item.feedback,
+                    }
+                );
+                results.successCount++;
+            } catch (error) {
+                results.failedCount++;
+                results.errors.push({
+                    submissionId: item.submissionId,
+                    error: error.message,
+                });
+            }
+        }
+
+        return results;
+    },
+
+    /**
+     * Export submissions as CSV or Excel
+     */
+    async exportSubmissions(assignmentId, trainerId, format) {
         const assignment = await Assignment.findById(assignmentId);
 
         if (!assignment) {
             throw new AppError('Assignment not found', 404);
         }
 
-        // Check ownership
         if (assignment.createdBy.toString() !== trainerId.toString()) {
             throw new AppError('Access denied', 403);
         }
 
-        const {
-            page = 1,
-            limit = 10,
-            status,
-            isLate,
-            evaluated,
-            sortBy = 'submittedAt',
-            sortOrder = 'desc',
-        } = filters;
+        const submissions = await Submission.find({ assignmentId })
+            .populate('studentId', 'name email')
+            .sort({ submittedAt: -1 })
+            .lean();
 
-        const query = { assignmentId };
-
-        // Apply filters
-        if (status) query.status = status;
-        if (isLate !== undefined) query.isLate = isLate === 'true';
-        if (evaluated !== undefined) {
-            query.marks = evaluated === 'true' ? { $ne: null } : null;
-        }
-
-        const skip = (page - 1) * limit;
-        const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
-
-        const [submissions, total] = await Promise.all([
-            Submission.find(query)
-                .populate('studentId', 'name email')
-                .populate('evaluatedBy', 'name')
-                .sort(sort)
-                .skip(skip)
-                .limit(Number(limit))
-                .lean(),
-            Submission.countDocuments(query),
-        ]);
-
-        // Add computed fields
-        const enrichedSubmissions = submissions.map(sub => ({
-            ...sub,
-            studentName: sub.studentId?.name || 'Unknown',
-            studentEmail: sub.studentId?.email || 'N/A',
-            isEvaluated: sub.marks !== null,
+        const data = submissions.map((s) => ({
+            'Student Name': s.studentId?.name || 'N/A',
+            'Student Email': s.studentId?.email || 'N/A',
+            'Submitted At': new Date(s.submittedAt).toLocaleString(),
+            'Submission Type': s.submissionType,
+            'Status': s.status,
+            'Marks': s.marks !== null ? s.marks : 'Not Evaluated',
+            'Grade': s.grade || 'N/A',
+            'Is Late': s.isLate ? 'Yes' : 'No',
+            'Attempt': s.submissionAttempt,
+            'Feedback': s.feedback || 'No feedback',
         }));
 
-        return {
-            submissions: enrichedSubmissions,
-            pagination: {
-                page: Number(page),
-                limit: Number(limit),
-                total,
-                totalPages: Math.ceil(total / limit),
-            },
+        if (format === 'csv') {
+            const parser = new Parser();
+            return Buffer.from(parser.parse(data));
+        }
+
+        // Excel format
+        const workbook = new ExcelJS.Workbook();
+        const worksheet = workbook.addWorksheet('Submissions');
+
+        worksheet.columns = [
+            { header: 'Student Name', key: 'Student Name', width: 20 },
+            { header: 'Student Email', key: 'Student Email', width: 30 },
+            { header: 'Submitted At', key: 'Submitted At', width: 20 },
+            { header: 'Submission Type', key: 'Submission Type', width: 15 },
+            { header: 'Status', key: 'Status', width: 15 },
+            { header: 'Marks', key: 'Marks', width: 10 },
+            { header: 'Grade', key: 'Grade', width: 10 },
+            { header: 'Is Late', key: 'Is Late', width: 10 },
+            { header: 'Attempt', key: 'Attempt', width: 10 },
+            { header: 'Feedback', key: 'Feedback', width: 50 },
+        ];
+
+        worksheet.addRows(data);
+
+        // Style header
+        worksheet.getRow(1).font = { bold: true };
+        worksheet.getRow(1).fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FF4472C4' },
         };
-    },
 
-    /**
-     * Delete submission
-     */
-    async deleteSubmission(submissionId, userId, userRole) {
-        const submission = await Submission.findById(submissionId);
-
-        if (!submission) {
-            throw new AppError('Submission not found', 404);
-        }
-
-        // Only admin or assignment owner can delete
-        if (userRole === 'trainer') {
-            const assignment = await Assignment.findById(submission.assignmentId);
-            if (assignment.createdBy.toString() !== userId.toString()) {
-                throw new AppError('Access denied', 403);
-            }
-        }
-
-        // Delete file from Cloudinary if exists
-        if (submission.fileUrl) {
-            try {
-                await deleteFromCloudinary(submission.fileUrl);
-            } catch (error) {
-                console.error('Error deleting file from Cloudinary:', error);
-            }
-        }
-
-        await submission.deleteOne();
+        return await workbook.xlsx.writeBuffer();
     },
 
     // ==========================================
@@ -221,103 +249,59 @@ const submissionService = {
     // ==========================================
 
     /**
-     * Get all submissions by student
+     * Get all submissions for a student
      */
-    async getMySubmissions(studentId, filters = {}) {
+    async getStudentSubmissions(studentId, filters = {}) {
         const {
             page = 1,
             limit = 10,
             status,
             internshipId,
-            sortBy = 'submittedAt',
-            sortOrder = 'desc',
         } = filters;
 
         const query = { studentId };
 
-        // Apply filters
         if (status) query.status = status;
-
-        // If internshipId is provided, filter by assignment's internship
-        let assignmentIds = [];
         if (internshipId) {
             const assignments = await Assignment.find({ internshipId }).select('_id');
-            assignmentIds = assignments.map(a => a._id);
-            query.assignmentId = { $in: assignmentIds };
+            query.assignmentId = { $in: assignments.map(a => a._id) };
         }
 
         const skip = (page - 1) * limit;
-        const sort = { [sortBy]: sortOrder === 'asc' ? 1 : -1 };
 
         const [submissions, total] = await Promise.all([
             Submission.find(query)
-                .populate({
-                    path: 'assignmentId',
-                    select: 'title type maxMarks dueDate internshipId',
-                    populate: {
-                        path: 'internshipId',
-                        select: 'title',
-                    },
-                })
+                .populate('assignmentId', 'title type maxMarks dueDate')
                 .populate('evaluatedBy', 'name')
-                .sort(sort)
+                .sort({ submittedAt: -1 })
                 .skip(skip)
                 .limit(Number(limit))
                 .lean(),
             Submission.countDocuments(query),
         ]);
 
-        // Enrich data
-        const enrichedSubmissions = submissions.map(sub => ({
-            ...sub,
-            assignmentTitle: sub.assignmentId?.title || 'Unknown',
-            internshipTitle: sub.assignmentId?.internshipId?.title || 'Unknown',
-            isEvaluated: sub.marks !== null,
-            grade: this.calculateGrade(sub.marks, sub.assignmentId?.maxMarks),
-        }));
-
         return {
-            submissions: enrichedSubmissions,
+            submissions,
             pagination: {
                 page: Number(page),
                 limit: Number(limit),
                 total,
-                totalPages: Math.ceil(total / limit),
             },
         };
     },
 
     /**
-     * Get student's own submission by ID
-     */
-    async getStudentSubmissionById(submissionId, studentId) {
-        const submission = await Submission.findById(submissionId)
-            .populate('assignmentId', 'title type maxMarks dueDate')
-            .populate('evaluatedBy', 'name email');
-
-        if (!submission) {
-            throw new AppError('Submission not found', 404);
-        }
-
-        // Check ownership
-        if (submission.studentId.toString() !== studentId.toString()) {
-            throw new AppError('Access denied', 403);
-        }
-
-        return submission;
-    },
-
-    /**
-     * Resubmit assignment
+     * Resubmit assignment (if allowed)
      */
     async resubmitAssignment(submissionId, studentId, data, file) {
-        const submission = await Submission.findById(submissionId);
+        const submission = await Submission.findById(submissionId)
+            .populate('assignmentId');
 
         if (!submission) {
             throw new AppError('Submission not found', 404);
         }
 
-        // Check ownership
+        // Verify ownership
         if (submission.studentId.toString() !== studentId.toString()) {
             throw new AppError('Access denied', 403);
         }
@@ -327,64 +311,47 @@ const submissionService = {
             throw new AppError('Resubmission not allowed for this submission', 400);
         }
 
-        // Get assignment to check resubmission settings
-        const assignment = await Assignment.findById(submission.assignmentId);
-        if (!assignment.allowResubmission) {
-            throw new AppError('This assignment does not allow resubmission', 400);
+        const assignment = submission.assignmentId;
+
+        // Check resubmission limit
+        if (submission.submissionAttempt >= assignment.maxResubmissions) {
+            throw new AppError('Maximum resubmission attempts reached', 400);
         }
 
         // Delete old file if exists
         if (submission.fileUrl) {
-            try {
-                await deleteFromCloudinary(submission.fileUrl);
-            } catch (error) {
-                console.error('Error deleting old file:', error);
-            }
+            await deleteFromCloudinary(submission.fileUrl);
         }
 
-        // Process new submission
-        const updateData = {
-            submissionType: data.submissionType,
-            submittedAt: new Date(),
-            status: 'submitted',
-            marks: null,
-            feedback: null,
-            evaluatedBy: null,
-            evaluatedAt: null,
-            submissionAttempt: submission.submissionAttempt + 1,
-        };
-
-        if (data.submissionType === 'pdf') {
-            if (!file) {
-                throw new AppError('File is required', 400);
-            }
-
+        // Upload new file if provided
+        if (file) {
             const uploaded = await uploadToCloudinary(file.buffer, {
                 folder: 'internships/submissions',
             });
 
-            updateData.fileUrl = uploaded.secure_url;
-            updateData.fileName = file.originalname;
-            updateData.fileSize = file.size;
-            updateData.mimeType = file.mimetype;
-            updateData.textContent = null;
-        } else if (data.submissionType === 'text') {
-            if (!data.textContent) {
-                throw new AppError('Text content is required', 400);
-            }
-            updateData.textContent = data.textContent;
-            updateData.fileUrl = null;
-            updateData.fileName = null;
-            updateData.fileSize = null;
+            submission.fileUrl = uploaded.secure_url;
+            submission.fileName = file.originalname;
+            submission.fileSize = file.size;
+            submission.mimeType = file.mimetype;
         }
 
-        Object.assign(submission, updateData);
+        // Update text content if provided
+        if (data.textContent) {
+            submission.textContent = data.textContent;
+        }
+
+        // Update submission details
+        submission.status = 'submitted';
+        submission.submissionAttempt += 1;
+        submission.submittedAt = new Date();
+        submission.marks = null;
+        submission.feedback = null;
+        submission.evaluatedBy = null;
+        submission.evaluatedAt = null;
+
         await submission.save();
 
-        return await submission.populate([
-            { path: 'assignmentId', select: 'title maxMarks' },
-            { path: 'studentId', select: 'name email' },
-        ]);
+        return submission.populate('assignmentId', 'title type maxMarks');
     },
 
     // ==========================================
@@ -392,13 +359,9 @@ const submissionService = {
     // ==========================================
 
     /**
-     * Calculate grade based on marks
+     * Calculate grade based on percentage
      */
-    calculateGrade(marks, maxMarks) {
-        if (marks === null || !maxMarks) return null;
-
-        const percentage = (marks / maxMarks) * 100;
-
+    _calculateGrade(percentage) {
         if (percentage >= 90) return 'A+';
         if (percentage >= 80) return 'A';
         if (percentage >= 70) return 'B+';
@@ -407,6 +370,20 @@ const submissionService = {
         if (percentage >= 40) return 'C';
         if (percentage >= 30) return 'D';
         return 'F';
+    },
+
+    /**
+     * Update student progress in enrollment
+     */
+    async _updateStudentProgress(studentId, internshipId) {
+        const enrollment = await InternshipEnrollment.findOne({
+            studentId,
+            internshipId,
+        });
+
+        if (enrollment) {
+            await enrollment.updateProgress();
+        }
     },
 };
 

@@ -5,12 +5,11 @@ const User = require('../models/user.model');
 const Session = require('../models/session.model');
 const { AppError } = require('../middlewares/error.middleware');
 const PasswordUtil = require('../utils/password.util');
+const emailService = require('./email.service');
 
 const userService = {
     /**
      * Get user by ID
-     * @param {String} userId - User ID
-     * @returns {Object} User object
      */
     async getUserById(userId) {
         const user = await User.findById(userId).select('-password');
@@ -19,8 +18,6 @@ const userService = {
 
     /**
      * Get user by email
-     * @param {String} email - User email
-     * @returns {Object} User object
      */
     async getUserByEmail(email) {
         const user = await User.findOne({ email }).select('+password');
@@ -29,8 +26,6 @@ const userService = {
 
     /**
      * Get all users with pagination and filters
-     * @param {Object} options - Query options
-     * @returns {Object} Paginated users
      */
     async getAllUsers(options = {}) {
         const {
@@ -43,7 +38,6 @@ const userService = {
 
         const query = {};
 
-        // Build query
         if (role) query.role = role;
         if (status) query.status = status;
         if (search) {
@@ -75,9 +69,6 @@ const userService = {
 
     /**
      * Get users by role
-     * @param {String} role - User role
-     * @param {Object} options - Query options
-     * @returns {Object} Paginated users
      */
     async getUsersByRole(role, options = {}) {
         return this.getAllUsers({ ...options, role });
@@ -85,8 +76,6 @@ const userService = {
 
     /**
      * Create new user
-     * @param {Object} userData - User data
-     * @returns {Object} Created user
      */
     async createUser(userData) {
         const { email, password } = userData;
@@ -97,6 +86,14 @@ const userService = {
             throw new AppError('Email already registered', 409);
         }
 
+        // Validate password
+        if (!password || password.length < 8) {
+            throw new AppError('Password must be at least 8 characters', 400);
+        }
+
+        // Store plain password for email
+        const plainPassword = password;
+
         // Hash password
         const hashedPassword = await PasswordUtil.hashPassword(password);
 
@@ -104,7 +101,21 @@ const userService = {
         const user = await User.create({
             ...userData,
             password: hashedPassword,
+            role: userData.role || 'student', // Default to student
         });
+
+        // Send welcome email with credentials (non-blocking)
+        emailService.sendWelcomeEmail(user, plainPassword)
+            .then(result => {
+                if (result.success) {
+                    console.log(`Welcome email sent to ${user.email}`);
+                } else {
+                    console.error(`Failed to send welcome email to ${user.email}:`, result.error);
+                }
+            })
+            .catch(err => {
+                console.error('Email sending error:', err);
+            });
 
         // Return user without password
         return user.toSafeObject();
@@ -112,9 +123,6 @@ const userService = {
 
     /**
      * Update user profile (non-admin)
-     * @param {String} userId - User ID
-     * @param {Object} updateData - Update data
-     * @returns {Object} Updated user
      */
     async updateUserProfile(userId, updateData) {
         const { name, email, phone, profileImage } = updateData;
@@ -153,9 +161,6 @@ const userService = {
 
     /**
      * Update user (admin)
-     * @param {String} userId - User ID
-     * @param {Object} updateData - Update data
-     * @returns {Object} Updated user
      */
     async updateUser(userId, updateData) {
         const { email, password } = updateData;
@@ -174,6 +179,9 @@ const userService = {
 
         // Hash password if provided
         if (password) {
+            if (password.length < 8) {
+                throw new AppError('Password must be at least 8 characters', 400);
+            }
             updateData.password = await PasswordUtil.hashPassword(password);
         }
 
@@ -192,9 +200,6 @@ const userService = {
 
     /**
      * Update password
-     * @param {String} userId - User ID
-     * @param {String} currentPassword - Current password
-     * @param {String} newPassword - New password
      */
     async updatePassword(userId, currentPassword, newPassword) {
         const user = await User.findById(userId).select('+password');
@@ -211,6 +216,11 @@ const userService = {
 
         if (!isPasswordValid) {
             throw new AppError('Current password is incorrect', 401);
+        }
+
+        // Validate new password
+        if (newPassword.length < 8) {
+            throw new AppError('New password must be at least 8 characters', 400);
         }
 
         // Hash new password
@@ -230,7 +240,6 @@ const userService = {
 
     /**
      * Delete user
-     * @param {String} userId - User ID
      */
     async deleteUser(userId) {
         const user = await User.findByIdAndDelete(userId);
@@ -243,13 +252,10 @@ const userService = {
         await Session.deleteMany({ userId });
 
         // TODO: Clean up related internships, assignments, etc.
-        // This will be implemented when those modules are created
     },
 
     /**
      * Toggle user status (active/inactive)
-     * @param {String} userId - User ID
-     * @returns {Object} Updated user
      */
     async toggleUserStatus(userId) {
         const user = await User.findById(userId);
@@ -274,8 +280,6 @@ const userService = {
 
     /**
      * Get user stats
-     * @param {String} userId - User ID
-     * @returns {Object} User statistics
      */
     async getUserStats(userId) {
         const user = await User.findById(userId);
@@ -285,26 +289,15 @@ const userService = {
         }
 
         // TODO: Implement stats when other modules are ready
-        // This will include:
-        // - Total internships (for students)
-        // - Attendance percentage
-        // - Assignments submitted/pending
-        // - Quiz scores
-        // - etc.
-
         return {
             userId: user._id,
             name: user.name,
             role: user.role,
-            // More stats will be added later
         };
     },
 
     /**
      * Search users
-     * @param {String} searchTerm - Search term
-     * @param {Object} options - Search options
-     * @returns {Array} Users
      */
     async searchUsers(searchTerm, options = {}) {
         const { role, status, limit = 10 } = options;
@@ -329,7 +322,6 @@ const userService = {
 
     /**
      * Count users by role
-     * @returns {Object} User counts
      */
     async getUserCounts() {
         const [students, trainers, admins, active, inactive] = await Promise.all([
@@ -352,7 +344,6 @@ const userService = {
 
     /**
      * Update last login time
-     * @param {String} userId - User ID
      */
     async updateLastLogin(userId) {
         await User.findByIdAndUpdate(userId, {

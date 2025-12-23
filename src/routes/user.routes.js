@@ -45,7 +45,7 @@ router.get(
 // Create new user (Admin only)
 router.post(
     '/',
-    isAdmin,
+    isTrainerOrAdmin,
     validate(userValidation.create),
     userController.createUser
 );

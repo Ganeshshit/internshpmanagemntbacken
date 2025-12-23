@@ -12,12 +12,41 @@ const router = express.Router();
 router.use(authMiddleware);
 
 /**
+ * STUDENT ROUTES
+ */
+
+/**
+ * @route   GET /api/v1/attendance/my-attendance
+ * @desc    Get current student's attendance
+ * @access  Private (Student)
+ */
+router.get(
+    '/my-attendance',
+    attendanceController.getMyAttendance
+);
+
+/**
+ * @route   GET /api/v1/attendance/my-monthly-stats
+ * @desc    Get current student's monthly stats
+ * @access  Private (Student)
+ */
+router.get(
+    '/my-monthly-stats',
+    attendanceController.getMyMonthlyStats
+);
+
+/**
+ * TRAINER/ADMIN ROUTES
+ */
+
+/**
  * @route   POST /api/v1/attendance
- * @desc    Mark attendance (Students mark their own, Trainers/Admins can mark for anyone)
- * @access  Private
+ * @desc    Mark attendance for a student
+ * @access  Private (Trainer, Admin)
  */
 router.post(
     '/',
+    isTrainerOrAdmin,
     validate(attendanceValidation.markAttendance),
     attendanceController.markAttendance
 );
@@ -35,68 +64,38 @@ router.post(
 );
 
 /**
- * @route   POST /api/v1/attendance/checkout
- * @desc    Check out from attendance
- * @access  Private (Student)
- */
-router.post(
-    '/checkout',
-    validate(attendanceValidation.checkOut),
-    attendanceController.checkOut
-);
-
-/**
- * @route   GET /api/v1/attendance/my-attendance
- * @desc    Get current student's attendance
- * @access  Private (Student)
- */
-router.get(
-    '/my-attendance',
-    attendanceController.getMyAttendance
-);
-
-/**
- * @route   GET /api/v1/attendance/today
- * @desc    Check if attendance is marked for today
- * @access  Private (Student)
- */
-router.get(
-    '/today',
-    attendanceController.checkTodayAttendance
-);
-
-/**
- * @route   GET /api/v1/attendance/pending
- * @desc    Get pending attendance approvals
+ * @route   GET /api/v1/attendance/enrolled-students/:internshipId
+ * @desc    Get enrolled students for an internship
  * @access  Private (Trainer, Admin)
  */
 router.get(
-    '/pending',
+    '/enrolled-students/:internshipId',
     isTrainerOrAdmin,
-    attendanceController.getPendingApprovals
+    attendanceController.getEnrolledStudents
 );
 
 /**
- * @route   GET /api/v1/attendance/stats/:internshipId/:studentId
- * @desc    Get student attendance statistics
- * @access  Private
- */
-router.get(
-    '/stats/:internshipId/:studentId',
-    validate(attendanceValidation.getStats),
-    attendanceController.getStudentStats
-);
-
-/**
- * @route   GET /api/v1/attendance/report/:internshipId
- * @desc    Get internship attendance report
+ * @route   GET /api/v1/attendance/monthly-stats/:internshipId/:studentId
+ * @desc    Get student monthly attendance statistics
  * @access  Private (Trainer, Admin)
  */
 router.get(
-    '/report/:internshipId',
+    '/monthly-stats/:internshipId/:studentId',
     isTrainerOrAdmin,
-    validate(attendanceValidation.getReport),
-    attendanceController.getInternshipReport
+    validate(attendanceValidation.getMonthlyStats),
+    attendanceController.getMonthlyStats
+);
+
+/**
+ * @route   GET /api/v1/attendance/monthly-report/:internshipId
+ * @desc    Get internship monthly attendance report
+ * @access  Private (Trainer, Admin)
+ */
+router.get(
+    '/monthly-report/:internshipId',
+    isTrainerOrAdmin,
+    validate(attendanceValidation.getMonthlyReport),
+    attendanceController.getMonthlyReport
 );
 
 /**
@@ -131,18 +130,6 @@ router.put(
     isTrainerOrAdmin,
     validate(attendanceValidation.updateAttendance),
     attendanceController.updateAttendance
-);
-
-/**
- * @route   PUT /api/v1/attendance/:id/approve
- * @desc    Approve pending attendance
- * @access  Private (Trainer, Admin)
- */
-router.put(
-    '/:id/approve',
-    isTrainerOrAdmin,
-    validate(attendanceValidation.approveAttendance),
-    attendanceController.approveAttendance
 );
 
 /**

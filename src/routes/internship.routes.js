@@ -1,5 +1,5 @@
 // src/routes/internship.routes.js
-// Internship route definitions
+// Enhanced route definitions with bulk operations and available students
 const express = require('express');
 const internshipController = require('../controllers/internship.controller');
 const authMiddleware = require('../middlewares/auth.middleware');
@@ -40,12 +40,27 @@ router.delete(
     internshipController.deleteInternship
 );
 
-// Get all internships (Admin/Trainer)
+// Get all trainer's internships (Trainer/Admin)
 router.get(
-    '/trainer/all',
+    '/trainer/my-internships',
     isTrainerOrAdmin,
     validate(internshipValidation.list),
     internshipController.getTrainerInternships
+);
+
+// Get enrolled students for internship (Trainer/Admin)
+router.get(
+    '/:id/students',
+    isTrainerOrAdmin,
+    validate(internshipValidation.getEnrolledStudents),
+    internshipController.getEnrolledStudents
+);
+
+// Get available students (not enrolled) (Trainer/Admin) - NEW
+router.get(
+    '/:id/available-students',
+    isTrainerOrAdmin,
+    internshipController.getAvailableStudents
 );
 
 // Enroll student (Trainer/Admin)
@@ -56,20 +71,19 @@ router.post(
     internshipController.enrollStudent
 );
 
+// Bulk enroll students (Trainer/Admin) - NEW
+router.post(
+    '/:id/bulk-enroll',
+    isTrainerOrAdmin,
+    internshipController.bulkEnrollStudents
+);
+
 // Unenroll student (Trainer/Admin)
 router.delete(
-    '/:internshipId/students/:studentId',
+    '/:internshipId/unenroll/:studentId',
     isTrainerOrAdmin,
     validate(internshipValidation.unenrollStudent),
     internshipController.unenrollStudent
-);
-
-// Get enrolled students for internship (Trainer/Admin)
-router.get(
-    '/:id/students',
-    isTrainerOrAdmin,
-    validate(internshipValidation.getEnrolledStudents),
-    internshipController.getEnrolledStudents
 );
 
 // ===============================
@@ -102,6 +116,3 @@ router.get(
 );
 
 module.exports = router;
-
-
-

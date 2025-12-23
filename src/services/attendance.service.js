@@ -4,13 +4,30 @@ const Internship = require('../models/internship.model');
 const Enrollment = require('../models/enrollment.model');
 const User = require('../models/user.model');
 const { AppError } = require('../middlewares/error.middleware');
+const mongoose = require('mongoose');
 
 class AttendanceService {
     /**
-     * Mark attendance for a student
+     * Mark attendance (Trainer/Admin only)
      */
     async markAttendance(data, userId, userRole) {
-        const { internshipId, studentId, date, status, remarks, location, ipAddress, device } = data;
+        const {
+            internshipId,
+            studentId,
+            date,
+            status,
+            remarks,
+            checkInTime,
+            checkOutTime,
+            location,
+            ipAddress,
+            device,
+        } = data;
+
+        // Only trainers and admins can mark attendance
+        if (!['trainer', 'admin'].includes(userRole)) {
+            throw new AppError('Only trainers and admins can mark attendance', 403);
+        }
 
         // Validate internship exists
         const internship = await Internship.findById(internshipId);
@@ -18,10 +35,15 @@ class AttendanceService {
             throw new AppError('Internship not found', 404);
         }
 
-        // Check if internship is active
-        const today = new Date();
-        if (today < internship.startDate || today > internship.endDate) {
-            throw new AppError('Cannot mark attendance outside internship duration', 400);
+        // Check trainer ownership - FIXED
+        if (userRole === 'trainer') {
+            if (!internship.trainerId) {
+                throw new AppError('Internship trainer is not defined. Contact admin.', 403);
+            }
+
+            if (internship.trainerId.toString() !== userId.toString()) {
+                throw new AppError('You can only mark attendance for your internships', 403);
+            }
         }
 
         // Validate student
@@ -41,11 +63,6 @@ class AttendanceService {
             throw new AppError('Student not enrolled in this internship', 403);
         }
 
-        // Authorization check
-        if (userRole === 'student' && studentId.toString() !== userId.toString()) {
-            throw new AppError('Students can only mark their own attendance', 403);
-        }
-
         // Check for duplicate attendance
         const attendanceDate = new Date(date);
         attendanceDate.setHours(0, 0, 0, 0);
@@ -63,30 +80,58 @@ class AttendanceService {
             throw new AppError('Attendance already marked for this date', 409);
         }
 
+        // Parse check-in and check-out times
+        let checkIn = null;
+        let checkOut = null;
+
+        if (checkInTime) {
+            const [inHour, inMinute] = checkInTime.split(':').map(Number);
+            checkIn = new Date(attendanceDate);
+            checkIn.setHours(inHour, inMinute, 0, 0);
+        }
+
+        if (checkOutTime) {
+            const [outHour, outMinute] = checkOutTime.split(':').map(Number);
+            checkOut = new Date(attendanceDate);
+            checkOut.setHours(outHour, outMinute, 0, 0);
+        }
+
+        // Validate location data
+        let locationData = undefined;
+        if (location && Array.isArray(location.coordinates) && location.coordinates.length === 2) {
+            locationData = {
+                type: 'Point',
+                coordinates: location.coordinates,
+            };
+        }
+
         // Create attendance record
         const attendance = await Attendance.create({
             internshipId,
             studentId,
             date: attendanceDate,
+            month: attendanceDate.getMonth() + 1,
+            year: attendanceDate.getFullYear(),
             status,
-            checkInTime: new Date(),
-            remarks,
+            checkInTime: checkIn,
+            checkOutTime: checkOut,
+            remarks: remarks || '',
+            location: locationData,
+            ipAddress: ipAddress || null,
+            device: device || null,
             markedBy: userId,
             markedByRole: userRole,
-            location: location ? { type: 'Point', coordinates: location } : undefined,
-            ipAddress,
-            device,
         });
 
         return attendance.populate([
-            { path: 'studentId', select: 'fullName email rollNumber' },
+            { path: 'studentId', select: 'name email rollNumber' },
             { path: 'internshipId', select: 'title code' },
-            { path: 'markedBy', select: 'fullName role' },
+            { path: 'markedBy', select: 'name role' },
         ]);
     }
 
     /**
-     * Bulk mark attendance for multiple students
+     * Bulk mark attendance for multiple students - FIXED
      */
     async bulkMarkAttendance(data, userId, userRole) {
         const { internshipId, date, attendanceRecords } = data;
@@ -102,9 +147,15 @@ class AttendanceService {
             throw new AppError('Internship not found', 404);
         }
 
-        // Check trainer ownership
-        if (userRole === 'trainer' && internship.createdBy.toString() !== userId.toString()) {
-            throw new AppError('You can only mark attendance for your internships', 403);
+        // Check trainer ownership - FIXED
+        if (userRole === 'trainer') {
+            if (!internship.trainerId) {
+                throw new AppError('Internship trainer is not defined. Contact admin.', 403);
+            }
+
+            if (internship.trainerId.toString() !== userId.toString()) {
+                throw new AppError('You can only mark attendance for your internships', 403);
+            }
         }
 
         const attendanceDate = new Date(date);
@@ -155,9 +206,12 @@ class AttendanceService {
                     internshipId,
                     studentId: record.studentId,
                     date: attendanceDate,
+                    month: attendanceDate.getMonth() + 1,
+                    year: attendanceDate.getFullYear(),
                     status: record.status,
-                    checkInTime: new Date(),
-                    remarks: record.remarks,
+                    checkInTime: record.checkInTime ? new Date(record.checkInTime) : new Date(),
+                    checkOutTime: record.checkOutTime ? new Date(record.checkOutTime) : null,
+                    remarks: record.remarks || '',
                     markedBy: userId,
                     markedByRole: userRole,
                 });
@@ -178,11 +232,21 @@ class AttendanceService {
      * Get attendance records with filters
      */
     async getAttendance(filters, userId, userRole) {
-        const { internshipId, studentId, status, startDate, endDate, page = 1, limit = 50 } = filters;
+        const {
+            internshipId,
+            studentId,
+            status,
+            startDate,
+            endDate,
+            month,
+            year,
+            page = 1,
+            limit = 50,
+        } = filters;
 
         const query = {};
 
-        // Build query based on role
+        // Students can only see their own
         if (userRole === 'student') {
             query.studentId = userId;
         }
@@ -190,10 +254,18 @@ class AttendanceService {
         if (internshipId) {
             query.internshipId = internshipId;
 
-            // Trainers can only see their internships
+            // Trainers can only see their internships - FIXED
             if (userRole === 'trainer') {
                 const internship = await Internship.findById(internshipId);
-                if (!internship || internship.createdBy.toString() !== userId.toString()) {
+                if (!internship) {
+                    throw new AppError('Internship not found', 404);
+                }
+
+                if (!internship.trainerId) {
+                    throw new AppError('Internship trainer not assigned', 403);
+                }
+
+                if (internship.trainerId.toString() !== userId.toString()) {
                     throw new AppError('Access denied to this internship', 403);
                 }
             }
@@ -211,6 +283,14 @@ class AttendanceService {
             query.status = status;
         }
 
+        if (month) {
+            query.month = parseInt(month);
+        }
+
+        if (year) {
+            query.year = parseInt(year);
+        }
+
         if (startDate || endDate) {
             query.date = {};
             if (startDate) query.date.$gte = new Date(startDate);
@@ -221,10 +301,10 @@ class AttendanceService {
 
         const [records, total] = await Promise.all([
             Attendance.find(query)
-                .populate('studentId', 'fullName email rollNumber')
+                .populate('studentId', 'name email rollNumber')
                 .populate('internshipId', 'title code')
-                .populate('markedBy', 'fullName role')
-                .populate('approvedBy', 'fullName role')
+                .populate('markedBy', 'name role')
+                .populate('editedBy', 'name role')
                 .sort({ date: -1, createdAt: -1 })
                 .skip(skip)
                 .limit(limit)
@@ -251,7 +331,6 @@ class AttendanceService {
             .populate('studentId', 'fullName email rollNumber')
             .populate('internshipId', 'title code')
             .populate('markedBy', 'fullName role')
-            .populate('approvedBy', 'fullName role')
             .populate('editedBy', 'fullName role');
 
         if (!attendance) {
@@ -265,7 +344,10 @@ class AttendanceService {
 
         if (userRole === 'trainer') {
             const internship = await Internship.findById(attendance.internshipId);
-            if (internship.createdBy.toString() !== userId.toString()) {
+            if (!internship || !internship.trainerId) {
+                throw new AppError('Access denied', 403);
+            }
+            if (internship.trainerId.toString() !== userId.toString()) {
                 throw new AppError('Access denied', 403);
             }
         }
@@ -274,7 +356,7 @@ class AttendanceService {
     }
 
     /**
-     * Update attendance
+     * Update attendance (Trainer/Admin only)
      */
     async updateAttendance(attendanceId, updates, userId, userRole) {
         const attendance = await Attendance.findById(attendanceId);
@@ -287,10 +369,13 @@ class AttendanceService {
             throw new AppError('Only trainers and admins can update attendance', 403);
         }
 
-        // Trainer authorization
+        // Trainer authorization - FIXED
         if (userRole === 'trainer') {
             const internship = await Internship.findById(attendance.internshipId);
-            if (internship.createdBy.toString() !== userId.toString()) {
+            if (!internship || !internship.trainerId) {
+                throw new AppError('Access denied to this internship', 403);
+            }
+            if (internship.trainerId.toString() !== userId.toString()) {
                 throw new AppError('Access denied to this internship', 403);
             }
         }
@@ -301,7 +386,11 @@ class AttendanceService {
 
         allowedFields.forEach((field) => {
             if (updates[field] !== undefined) {
-                updateData[field] = updates[field];
+                if (field === 'checkInTime' || field === 'checkOutTime') {
+                    updateData[field] = new Date(updates[field]);
+                } else {
+                    updateData[field] = updates[field];
+                }
             }
         });
 
@@ -324,7 +413,7 @@ class AttendanceService {
     }
 
     /**
-     * Delete attendance
+     * Delete attendance (Admin only)
      */
     async deleteAttendance(attendanceId, userId, userRole) {
         const attendance = await Attendance.findById(attendanceId);
@@ -342,43 +431,9 @@ class AttendanceService {
     }
 
     /**
-     * Check out attendance
+     * Get monthly attendance stats
      */
-    async checkOut(data, userId) {
-        const { internshipId, date } = data;
-
-        const attendanceDate = new Date(date || new Date());
-        attendanceDate.setHours(0, 0, 0, 0);
-
-        const attendance = await Attendance.findOne({
-            internshipId,
-            studentId: userId,
-            date: {
-                $gte: attendanceDate,
-                $lt: new Date(attendanceDate.getTime() + 24 * 60 * 60 * 1000),
-            },
-        });
-
-        if (!attendance) {
-            throw new AppError('No check-in found for today', 404);
-        }
-
-        if (attendance.checkOutTime) {
-            throw new AppError('Already checked out', 400);
-        }
-
-        await attendance.checkOut();
-
-        return attendance.populate([
-            { path: 'studentId', select: 'fullName email' },
-            { path: 'internshipId', select: 'title code' },
-        ]);
-    }
-
-    /**
-     * Get student attendance statistics
-     */
-    async getStudentStats(internshipId, studentId, userId, userRole) {
+    async getMonthlyStats(internshipId, studentId, month, year, userId, userRole) {
         // Authorization
         if (userRole === 'student' && studentId.toString() !== userId.toString()) {
             throw new AppError('Cannot view other students statistics', 403);
@@ -386,59 +441,65 @@ class AttendanceService {
 
         if (userRole === 'trainer') {
             const internship = await Internship.findById(internshipId);
-            if (!internship || internship.createdBy.toString() !== userId.toString()) {
+            if (!internship || !internship.trainerId) {
+                throw new AppError('Access denied to this internship', 403);
+            }
+            if (internship.trainerId.toString() !== userId.toString()) {
                 throw new AppError('Access denied to this internship', 403);
             }
         }
 
-        const stats = await Attendance.getAttendanceStats(internshipId, studentId);
+        const stats = await Attendance.getMonthlyStats(internshipId, studentId, month, year);
 
-        // Get recent attendance
-        const recentAttendance = await Attendance.find({
+        // Get attendance records for the month
+        const records = await Attendance.find({
             internshipId,
             studentId,
+            month: parseInt(month),
+            year: parseInt(year),
         })
-            .sort({ date: -1 })
-            .limit(10)
-            .select('date status checkInTime checkOutTime duration')
+            .sort({ date: 1 })
+            .select('date status checkInTime checkOutTime duration remarks')
             .lean();
 
         return {
             stats,
-            recentAttendance,
+            records,
         };
     }
 
     /**
-     * Get internship attendance report
+     * Get internship monthly report - FIXED
      */
-    async getInternshipReport(internshipId, filters, userId, userRole) {
+    async getInternshipMonthlyReport(internshipId, month, year, userId, userRole) {
         // Validate internship
         const internship = await Internship.findById(internshipId);
         if (!internship) {
             throw new AppError('Internship not found', 404);
         }
 
-        // Authorization
-        if (userRole === 'trainer' && internship.createdBy.toString() !== userId.toString()) {
-            throw new AppError('Access denied to this internship', 403);
+        // Authorization: Trainer must be assigned - FIXED
+        if (userRole === 'trainer') {
+            if (!internship.trainerId) {
+                throw new AppError('Trainer not assigned to this internship', 403);
+            }
+
+            if (internship.trainerId.toString() !== userId.toString()) {
+                throw new AppError('You are not authorized to generate this report', 403);
+            }
         }
 
-        const { startDate, endDate } = filters;
+        // Student-wise report
+        const report = await Attendance.getInternshipMonthlyReport(internshipId, month, year);
 
-        const report = await Attendance.getInternshipAttendanceReport(
-            internshipId,
-            startDate,
-            endDate
-        );
-
-        // Get overall statistics
+        // Overall statistics
         const overallStats = await Attendance.aggregate([
             {
                 $match: {
-                    internshipId: require('mongoose').Types.ObjectId(internshipId),
-                    ...(startDate && { date: { $gte: new Date(startDate) } }),
-                    ...(endDate && { date: { $lte: new Date(endDate) } }),
+                    internshipId: new mongoose.Types.ObjectId(internshipId),
+
+                    month: parseInt(month),
+                    year: parseInt(year),
                 },
             },
             {
@@ -455,91 +516,42 @@ class AttendanceService {
                 title: internship.title,
                 code: internship.code,
             },
-            dateRange: {
-                startDate: startDate || internship.startDate,
-                endDate: endDate || internship.endDate,
-            },
+            month: parseInt(month),
+            year: parseInt(year),
             overallStats,
             studentReports: report,
         };
     }
 
     /**
-     * Approve pending attendance
+     * Get trainer's enrolled students
      */
-    async approveAttendance(attendanceId, userId, userRole) {
-        const attendance = await Attendance.findById(attendanceId);
-        if (!attendance) {
-            throw new AppError('Attendance record not found', 404);
+    async getEnrolledStudents(internshipId, userId, userRole) {
+        // Validate internship
+        const internship = await Internship.findById(internshipId);
+        if (!internship) {
+            throw new AppError('Internship not found', 404);
         }
 
-        // Only trainers and admins
-        if (!['trainer', 'admin'].includes(userRole)) {
-            throw new AppError('Only trainers and admins can approve attendance', 403);
-        }
-
-        // Trainer authorization
+        // Check trainer ownership - FIXED
         if (userRole === 'trainer') {
-            const internship = await Internship.findById(attendance.internshipId);
-            if (internship.createdBy.toString() !== userId.toString()) {
+            if (!internship.trainerId) {
+                throw new AppError('Internship trainer not assigned', 403);
+            }
+            if (internship.trainerId.toString() !== userId.toString()) {
                 throw new AppError('Access denied to this internship', 403);
             }
         }
 
-        if (attendance.isApproved) {
-            throw new AppError('Attendance already approved', 400);
-        }
+        // Get enrolled students
+        const enrollments = await Enrollment.find({
+            internshipId,
+            status: 'active',
+        })
+            .populate('studentId', 'fullName email rollNumber')
+            .lean();
 
-        await attendance.approve(userId);
-
-        return attendance.populate([
-            { path: 'studentId', select: 'fullName email' },
-            { path: 'approvedBy', select: 'fullName role' },
-        ]);
-    }
-
-    /**
-     * Get pending approvals
-     */
-    async getPendingApprovals(filters, userId, userRole) {
-        const { internshipId, page = 1, limit = 50 } = filters;
-
-        const query = { isApproved: false };
-
-        if (internshipId) {
-            query.internshipId = internshipId;
-        }
-
-        // Trainers only see their internships
-        if (userRole === 'trainer') {
-            const internships = await Internship.find({ createdBy: userId }).select('_id');
-            const internshipIds = internships.map((i) => i._id);
-            query.internshipId = { $in: internshipIds };
-        }
-
-        const skip = (page - 1) * limit;
-
-        const [records, total] = await Promise.all([
-            Attendance.find(query)
-                .populate('studentId', 'fullName email rollNumber')
-                .populate('internshipId', 'title code')
-                .populate('markedBy', 'fullName role')
-                .sort({ createdAt: -1 })
-                .skip(skip)
-                .limit(limit)
-                .lean(),
-            Attendance.countDocuments(query),
-        ]);
-
-        return {
-            records,
-            pagination: {
-                page: Number(page),
-                limit: Number(limit),
-                total,
-                pages: Math.ceil(total / limit),
-            },
-        };
+        return enrollments.map((e) => e.studentId);
     }
 }
 
