@@ -1,6 +1,4 @@
 // src/validations/auth.validation.js
-// Authentication validation schemas
-
 const Joi = require('joi');
 const { ROLES } = require('../constants/roles');
 
@@ -48,19 +46,31 @@ const authValidation = {
     }),
   },
 
+  // ✅ NEW: Forgot Password Validation
   forgotPassword: {
     body: Joi.object({
-      email: Joi.string().email().required(),
+      email: Joi.string().email().required().messages({
+        'string.email': 'Please provide a valid email address',
+        'any.required': 'Email is required',
+      }),
     }),
   },
 
+  // ✅ NEW: Reset Password Validation
   resetPassword: {
     body: Joi.object({
-      token: Joi.string().required(),
+      token: Joi.string().required().messages({
+        'any.required': 'Reset token is required',
+      }),
       newPassword: Joi.string()
         .min(8)
         .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/)
-        .required(),
+        .required()
+        .messages({
+          'string.min': 'Password must be at least 8 characters',
+          'string.pattern.base': 'Password must contain uppercase, lowercase, and number',
+          'any.required': 'New password is required',
+        }),
     }),
   },
 };

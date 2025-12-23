@@ -689,36 +689,247 @@ The Internship Management Team
     /**
      * Send password reset email
      */
-    async sendPasswordResetEmail(user, resetToken) {
+    async sendPasswordResetEmail(email, resetToken, userName) {
+        const transporter = createTransporter();
+
+        const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
+
+        const mailOptions = {
+            from: `"${process.env.APP_NAME || 'LMS Platform'}" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: 'Reset your password',
+            html: `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Password Reset</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #f4f6f8;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #111827;
+    }
+    .email-wrapper {
+      width: 100%;
+      padding: 40px 0;
+      background-color: #f4f6f8;
+    }
+    .email-container {
+      max-width: 600px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.06);
+    }
+    .email-header {
+      background: #4f46e5;
+      padding: 28px 32px;
+      text-align: center;
+      color: #ffffff;
+    }
+    .email-header h1 {
+      margin: 0;
+      font-size: 22px;
+      font-weight: 600;
+      letter-spacing: 0.2px;
+    }
+    .email-body {
+      padding: 32px;
+      line-height: 1.6;
+    }
+    .email-body p {
+      margin: 0 0 16px;
+      font-size: 15px;
+      color: #374151;
+    }
+    .button-wrapper {
+      text-align: center;
+      margin: 32px 0;
+    }
+    .reset-button {
+      display: inline-block;
+      padding: 14px 36px;
+      background-color: #4f46e5;
+      color: #ffffff !important;
+      text-decoration: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .reset-button:hover {
+      background-color: #4338ca;
+    }
+    .link-box {
+      margin-top: 24px;
+      padding: 16px;
+      background: #f9fafb;
+      border-radius: 8px;
+      font-size: 13px;
+      color: #4b5563;
+      word-break: break-all;
+    }
+    .warning-box {
+      margin-top: 28px;
+      padding: 16px;
+      background: #fffbeb;
+      border-left: 4px solid #f59e0b;
+      border-radius: 6px;
+      font-size: 14px;
+      color: #92400e;
+    }
+    .email-footer {
+      padding: 20px 32px;
+      background: #f9fafb;
+      text-align: center;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .email-footer p {
+      margin: 6px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="email-wrapper">
+    <div class="email-container">
+      
+      <div class="email-header">
+        <h1>Password Reset Request</h1>
+      </div>
+
+      <div class="email-body">
+        <p>Hi <strong>${userName}</strong>,</p>
+
+        <p>
+          We received a request to reset the password for your account.
+          Click the button below to choose a new password.
+        </p>
+
+        <div class="button-wrapper">
+          <a href="${resetUrl}" class="reset-button">Reset Password</a>
+        </div>
+
+        <p>
+          If the button doesn’t work, copy and paste the following link into your browser:
+        </p>
+
+        <div class="link-box">
+          ${resetUrl}
+        </div>
+
+        <div class="warning-box">
+          <strong>Security notice:</strong>
+          <ul style="margin: 8px 0 0 18px; padding: 0;">
+            <li>This link expires in <strong>15 minutes</strong></li>
+            <li>This link can only be used once</li>
+            <li>If you didn’t request this, you can safely ignore this email</li>
+          </ul>
+        </div>
+
+        <p style="margin-top: 24px;">
+          If you have any issues, please contact our support team.
+        </p>
+
+        <p>
+          — The ${process.env.APP_NAME || 'LMS Platform'} Team
+        </p>
+      </div>
+
+      <div class="email-footer">
+        <p>&copy; ${new Date().getFullYear()} ${process.env.APP_NAME || 'LMS Platform'}</p>
+        <p>This is an automated message. Please do not reply.</p>
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
+`,
+            text: `
+Hi ${userName},
+
+We received a request to reset your password.
+
+Use the link below to reset your password:
+${resetUrl}
+
+This link expires in 15 minutes and can only be used once.
+
+If you didn't request this, you can safely ignore this email.
+
+— ${process.env.APP_NAME || 'LMS Platform'}
+© ${new Date().getFullYear()}
+`,
+        };
+
+
         try {
-            const transporter = createTransporter();
-            const resetUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`;
-
-            const mailOptions = {
-                from: `"${process.env.APP_NAME || 'Internship Management System'}" <${process.env.SMTP_FROM || process.env.SMTP_USER}>`,
-                to: user.email,
-                subject: 'Password Reset Request',
-                html: `
-                    <h2>Password Reset Request</h2>
-                    <p>Hello ${user.name},</p>
-                    <p>You requested to reset your password. Click the button below to reset it:</p>
-                    <a href="${resetUrl}" style="display: inline-block; background: #667eea; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0;">
-                        Reset Password
-                    </a>
-                    <p>Or copy and paste this link into your browser:</p>
-                    <p>${resetUrl}</p>
-                    <p>This link will expire in 1 hour.</p>
-                    <p>If you didn't request this, please ignore this email.</p>
-                `,
-            };
-
             await transporter.sendMail(mailOptions);
-            return { success: true };
+            console.log(`Password reset email sent to ${email}`);
+            return true;
         } catch (error) {
-            console.error('Error sending password reset email:', error);
-            return { success: false, error: error.message };
+            console.error('Error sending email:', error);
+            throw new Error('Failed to send password reset email');
         }
     },
+    async sendPasswordResetConfirmation(email, userName) {
+        const mailOptions = {
+            from: `"${process.env.APP_NAME || 'LMS Platform'}" <${process.env.SMTP_USER}>`,
+            to: email,
+            subject: 'Password Successfully Reset',
+            html: `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+            .content { background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px; }
+            .success { background: #d4edda; border-left: 4px solid #28a745; padding: 15px; margin: 20px 0; }
+            .footer { text-align: center; margin-top: 20px; font-size: 12px; color: #666; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>✅ Password Reset Successful</h1>
+            </div>
+            <div class="content">
+              <p>Hi ${userName},</p>
+              
+              <div class="success">
+                <strong>Your password has been successfully reset.</strong>
+              </div>
+              
+              <p>You can now log in with your new password.</p>
+              
+              <p><strong>Security Tip:</strong> If you didn't make this change, please contact our support team immediately.</p>
+              
+              <p>Thank you for using our platform!</p>
+            </div>
+            <div class="footer">
+              <p>&copy; ${new Date().getFullYear()} ${process.env.APP_NAME || 'LMS Platform'}. All rights reserved.</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `,
+        };
+
+        try {
+            await this.transporter.sendMail(mailOptions);
+            return true;
+        } catch (error) {
+            console.error('Error sending confirmation email:', error);
+            // Don't throw error - password reset already succeeded
+        }
+    }
 };
 
 module.exports = emailService;

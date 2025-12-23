@@ -1,6 +1,4 @@
 // src/controllers/auth.controller.js
-// src/controllers/auth.controller.js
-
 const AuthService = require('../services/auth.service');
 const ApiResponse = require('../utils/response.util');
 const { asyncHandler, AppError } = require('../middlewares/error.middleware');
@@ -95,6 +93,54 @@ class AuthController {
     });
 
     return ApiResponse.success(res, null, 'Logged out successfully');
+  });
+
+  /**
+   * ✅ NEW: Request password reset
+   * POST /api/auth/forgot-password
+   * Body: { email }
+   */
+  static forgotPassword = asyncHandler(async (req, res) => {
+    const { email } = req.body;
+    const result = await AuthService.forgotPassword(email);
+
+    return ApiResponse.success(
+      res,
+      null,
+      'If that email exists, a password reset link has been sent'
+    );
+  });
+
+  /**
+   * ✅ NEW: Reset password with token
+   * POST /api/auth/reset-password
+   * Body: { token, newPassword }
+   */
+  static resetPassword = asyncHandler(async (req, res) => {
+    const { token, newPassword } = req.body;
+    const result = await AuthService.resetPassword(token, newPassword);
+
+    return ApiResponse.success(
+      res,
+      null,
+      'Password reset successful. Please login with your new password.'
+    );
+  });
+
+  /**
+   * ✅ NEW: Change password (authenticated)
+   * PUT /api/auth/change-password
+   * Body: { currentPassword, newPassword }
+   */
+  static changePassword = asyncHandler(async (req, res) => {
+    const { currentPassword, newPassword } = req.body;
+    const result = await AuthService.changePassword(
+      req.user.userId,
+      currentPassword,
+      newPassword
+    );
+
+    return ApiResponse.success(res, null, 'Password changed successfully');
   });
 }
 
