@@ -3,6 +3,7 @@
 
 const User = require('../models/user.model');
 const Session = require('../models/session.model');
+
 const { AppError } = require('../middlewares/error.middleware');
 const PasswordUtil = require('../utils/password.util');
 const emailService = require('./email.service');

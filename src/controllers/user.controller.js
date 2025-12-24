@@ -4,7 +4,7 @@
 const userService = require('../services/user.service');
 const ApiResponse = require('../utils/response.util');
 const { asyncHandler, AppError } = require('../middlewares/error.middleware');
-
+const StudentProfileService = require('../services/studentProfile.service');
 const userController = {
     /**
      * Get current user profile
@@ -105,20 +105,36 @@ const userController = {
      * @route GET /api/v1/users/:id
      * @access Admin, Trainer
      */
-    getUserById: asyncHandler(async (req, res) => {
-        const user = await userService.getUserById(req.params.id);
+    // getUserById: asyncHandler(async (req, res) => {
 
-        if (!user) {
+    //     const user = await userService.getUserById(req.params.id);
+
+    //     if (!user) {
+    //         throw new AppError('User not found', 404);
+    //     }
+
+    //     return ApiResponse.success(
+    //         res,
+    //         user,
+    //         'User retrieved successfully'
+    //     );
+    // }),
+
+    getUserById: asyncHandler(async (req, res) => {
+        const profile = await StudentProfileService.getFullStudentProfile(
+            req.params.id
+        );
+
+        if (!profile) {
             throw new AppError('User not found', 404);
         }
 
         return ApiResponse.success(
             res,
-            user,
-            'User retrieved successfully'
+            profile,
+            'Student profile retrieved successfully'
         );
     }),
-
     /**
      * Create new user
      * @route POST /api/v1/users
