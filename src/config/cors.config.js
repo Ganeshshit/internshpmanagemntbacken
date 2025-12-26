@@ -2,6 +2,7 @@
 // CORS configuration
 
 const allowedOrigins = [
+  'https://internshipmanagement.vercel.app/login',
   'http://localhost:3000',
   'http://localhost:5173',
   process.env.FRONTEND_URL,
