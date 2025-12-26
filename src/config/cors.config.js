@@ -1,37 +1,38 @@
 // src/config/cors.config.js
-// CORS configuration
+
+const normalize = (url) => url?.replace(/\/$/, '');
 
 const allowedOrigins = [
-  'https://internshipmanagement.vercel.app/login',
-  'http://localhost:3000',
-  'http://localhost:5173',
-  process.env.FRONTEND_URL,
+  normalize(process.env.FRONTEND_URL),
+  'https://internshipmanagement.vercel.app',
+  'https://localhost:5173', // local HTTPS
+  'http://localhost:5173',  // local HTTP (optional)
 ].filter(Boolean);
 
 module.exports = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
+    // Allow requests with no origin (Postman, server-to-server)
     if (!origin) return callback(null, true);
-    
+
     if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+      return callback(null, true);
     }
+
+    return callback(new Error(`CORS blocked: ${origin}`));
   },
-  
+
   credentials: true,
-  
+
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  
+
   allowedHeaders: [
     'Content-Type',
     'Authorization',
     'X-Requested-With',
     'Accept',
   ],
-  
+
   exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  
-  maxAge: 600, // 10 minutes
+
+  maxAge: 600,
 };
